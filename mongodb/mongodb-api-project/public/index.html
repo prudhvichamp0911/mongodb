@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contacts AI Query</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    .subtitle { color: #94a3b8; font-size: 0.85rem; margin-bottom: 20px; }
+    #chat {
+      width: 100%;
+      max-width: 860px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-bottom: 16px;
+    }
+    .msg { border-radius: 10px; padding: 12px 16px; max-width: 100%; }
+    .msg.user { background: #1e40af; align-self: flex-end; }
+    .msg.agent { background: #1e293b; align-self: flex-start; width: 100%; }
+    .msg .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 6px; }
+    .answer { line-height: 1.5; white-space: pre-wrap; }
+    details { margin-top: 10px; font-size: 0.8rem; }
+    summary { cursor: pointer; color: #7dd3fc; }
+    pre {
+      background: #0b1220;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin-top: 6px;
+      font-size: 0.75rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 0.8rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid #334155;
+      white-space: nowrap;
+    }
+    th { color: #7dd3fc; }
+    .table-wrap { overflow-x: auto; }
+    #input-bar {
+      width: 100%;
+      max-width: 860px;
+      display: flex;
+      gap: 8px;
+      position: sticky;
+      bottom: 0;
+      padding-top: 8px;
+      background: #0f172a;
+    }
+    #question {
+      flex: 1;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #e2e8f0;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    #question:focus { border-color: #38bdf8; }
+    button {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 8px;
+      background: #0284c7;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { background: #475569; cursor: wait; }
+    .error { color: #fca5a5; }
+    .loading { color: #94a3b8; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Contacts AI Query</h1>
+  <p class="subtitle">Ask questions about the contacts database in plain English</p>
+
+  <div id="chat"></div>
+
+  <form id="input-bar">
+    <input id="question" type="text" placeholder='e.g. "How many contacts work at Acme?" or "Show me 5 managers"' autocomplete="off" />
+    <button id="send" type="submit">Ask</button>
+  </form>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('input-bar');
+    const input = document.getElementById('question');
+    const sendBtn = document.getElementById('send');
+
+    function addMsg(role, html) {
+      const div = document.createElement('div');
+      div.className = `msg ${role}`;
+      div.innerHTML = `<div class="label">${role === 'user' ? 'You' : 'Agent'}</div>${html}`;
+      chat.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return div;
+    }
+
+    function renderTable(rows) {
+      if (!rows || rows.length === 0) return '';
+      const cols = Object.keys(rows[0]).filter((c) => c !== '_id');
+      const head = cols.map((c) => `<th>${c}</th>`).join('');
+      const body = rows
+        .map((r) => '<tr>' + cols.map((c) => `<td>${r[c] ?? ''}</td>`).join('') + '</tr>')
+        .join('');
+      return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const question = input.value.trim();
+      if (!question) return;
+
+      addMsg('user', `<div class="answer"></div>`).querySelector('.answer').textContent = question;
+      input.value = '';
+      sendBtn.disabled = true;
+      const pending = addMsg('agent', '<div class="loading">Thinking…</div>');
+
+      try {
+        const res = await fetch('/api/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          pending.innerHTML = `<div class="label">Agent</div><div class="error">Error: ${data.error || res.statusText}</div>`;
+        } else {
+          const answerDiv = document.createElement('div');
+          answerDiv.className = 'answer';
+          answerDiv.textContent = data.answer;
+
+          const wrapper = document.createElement('div');
+          wrapper.appendChild(answerDiv);
+
+          if (data.results && data.results.length > 0 && Object.keys(data.results[0]).length > 1) {
+            wrapper.insertAdjacentHTML('beforeend', renderTable(data.results));
+          }
+          if (data.mongoQuery) {
+            wrapper.insertAdjacentHTML(
+              'beforeend',
+              `<details><summary>MongoDB query used</summary><pre>${JSON.stringify(data.mongoQuery, null, 2)}</pre></details>`
+            );
+          }
+
+          pending.innerHTML = '<div class="label">Agent</div>';
+          pending.appendChild(wrapper);
+        }
+      } catch (err) {
+        pending.innerHTML = `<div class="label">Agent</div><div class="error">Network error: ${err.message}</div>`;
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    });
+  </script>
+</body>
+</html>
